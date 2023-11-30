@@ -27,7 +27,7 @@ def load_tag_embeddings(tag_file, model):
     return tag_embeddings, tags
 
 
-def main(index_file, clip_model: str = "ViT-B/32", tags_file: str = "general.txt", num_tags: int = 1, color="#dcd7ff"):
+def main(index_file, clip_model: str = "ViT-B/16Plus", tags_file: str = "general.txt", num_tags: int = 1, color="#dcd7ff"):
     model, preprocess = clip.load(clip_model, device=DEVICE)
     cosine_sim = nn.CosineSimilarity()
 
@@ -41,7 +41,7 @@ def main(index_file, clip_model: str = "ViT-B/32", tags_file: str = "general.txt
     index.register_model(
         id=1,
         name="CLIP",
-        url="https://raw.githubusercontent.com/simon987/sist2-models/main/clip/models/clip-vit-base-patch32-q8.onnx",
+        url="https://huggingface.co/immich-app/XLM-Roberta-Large-Vit-B-16Plus/raw/main/visual/model.onnx",
         path="idx_512.clip",
         size=512,
         type="flat"
