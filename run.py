@@ -27,7 +27,7 @@ def load_tag_embeddings(tag_file, model):
     return tag_embeddings, tags
 
 
-def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", tags_file: str = "general.txt", num_tags: int = 1, color="#dcd7ff"):
+def main(index_file, clip_model: str = "ViT-B/16", tags_file: str = "general.txt", num_tags: int = 1, color="#dcd7ff"):
     model, preprocess = clip.load(clip_model, device=DEVICE)
     cosine_sim = nn.CosineSimilarity()
 
