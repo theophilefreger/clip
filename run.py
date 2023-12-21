@@ -7,14 +7,20 @@ from PIL import Image
 from torch import nn
 import numpy as np
 from sist2 import Sist2Index, serialize_float_array, print_progress
+import os
 
 # Définition des URLs pour télécharger les modèles ONNX
 text_model_url = "https://huggingface.co/immich-app/XLM-Roberta-Large-Vit-B-16Plus/resolve/main/textual/model.onnx?download=true"
 vision_model_url = "https://huggingface.co/immich-app/XLM-Roberta-Large-Vit-B-16Plus/resolve/main/visual/model.onnx?download=true"
 
 # Chemins locaux pour enregistrer les modèles ONNX
-text_model_path = "/models/text_model.onnx"
-vision_model_path = "/models/vision_model.onnx"
+models_dir = "/models"
+text_model_path = os.path.join(models_dir, "text_model.onnx")
+vision_model_path = os.path.join(models_dir, "vision_model.onnx")
+
+# Créer le répertoire s'il n'existe pas
+if not os.path.exists(models_dir):
+    os.makedirs(models_dir)
 
 # Fonction pour télécharger et sauvegarder les modèles ONNX
 def download_model(url, file_path):
