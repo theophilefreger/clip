@@ -33,11 +33,18 @@ def load_tag_embeddings(tag_file, model, tokenizer):
 
 # Fonction principale
 def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", tags_file: str = "general.txt", num_tags: int = 1, color="#dcd7ff"):
+    # Initialisation de l'index
+    index = Sist2Index(index_file)
+
     # Chargement du modèle et du tokenizer
     model = CLIPModel(clip_model)
     tokenizer = Tokenizer(clip_model)
     cosine_sim = nn.CosineSimilarity()
+
+    # Obtention de la version de CLIP
     clip_version = index.get("clip_version", default=0)
+
+    # Chargement des embeddings des tags
     tag_embeddings, tags = load_tag_embeddings(tags_file, model, tokenizer)
 
     index = Sist2Index(index_file)
