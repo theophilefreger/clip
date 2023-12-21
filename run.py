@@ -21,11 +21,12 @@ def load_tag_embeddings(tag_file, model, tokenizer):
     with open(tag_file) as f:
         tags = [line.strip() for line in f]
 
-    # Utilisation du tokenizer de clip-as-service
     tokenized = tokenizer(tags, context_length=77, truncate=True)
     text_tokenized = tokenized['input_ids'].to(DEVICE)
+    attention_mask = tokenized['attention_mask'].to(DEVICE)
+
     with torch.no_grad():
-        tag_embeddings = model.encode_text(text_tokenized)
+        tag_embeddings = model.encode_text(text_tokenized, attention_mask)
 
     print(f"Pre-computed embeddings for {len(tags)} tags")
     return tag_embeddings, tags
