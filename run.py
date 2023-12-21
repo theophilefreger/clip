@@ -21,6 +21,7 @@ def load_tag_embeddings(tag_file, model, tokenizer):
     with open(tag_file) as f:
         tags = [line.strip() for line in f]
 
+    # Utilisation du tokenizer de clip-as-service
     tokenized = tokenizer(tags, context_length=77, truncate=True)
     text_tokenized = tokenized['input_ids'].to(DEVICE)
     attention_mask = tokenized['attention_mask'].to(DEVICE)
@@ -33,21 +34,15 @@ def load_tag_embeddings(tag_file, model, tokenizer):
 
 # Fonction principale
 def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", tags_file: str = "general.txt", num_tags: int = 1, color="#dcd7ff"):
-    # Initialisation de l'index
-    index = Sist2Index(index_file)
-
     # Chargement du modèle et du tokenizer
     model = CLIPModel(clip_model)
     tokenizer = Tokenizer(clip_model)
     cosine_sim = nn.CosineSimilarity()
 
-    # Obtention de la version de CLIP
-    clip_version = index.get("clip_version", default=0)
-
-    # Chargement des embeddings des tags
     tag_embeddings, tags = load_tag_embeddings(tags_file, model, tokenizer)
 
     index = Sist2Index(index_file)
+    # Enregistrement du modèle dans l'index
     index.register_model(
         id=1,
         name="CLIP",
@@ -73,12 +68,15 @@ def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", 
                 image = Image.open(BytesIO(tn))
             else:
                 image = Image.open(doc.path)
-            image = preprocess(image).unsqueeze(0).to(DEVICE)
+            # Pas de prétraitement spécifique ici, à ajuster si nécessaire
+            image = image.convert('RGB')
         except Exception as e:
             print(f"Could not load image {doc.rel_path}: {e}", file=stderr)
             continue
 
         with torch.no_grad():
+            # Génération des embeddings pour l'image
+            # À ajuster selon les besoins spécifiques du modèle XLM-Roberta-Large-Vit-B-16Plus
             embeddings = model.encode_image(image)
 
         if num_tags > 0:
@@ -100,7 +98,9 @@ def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", 
 
         index.upsert_embedding(doc.id, 0, None, 1, encoded)
 
-        print(f"Generated embeddings for {doc.rel_path}")
+        print(
+            f"Generated embeddings for {doc.rel_path}"
+        )
         done += 1
         print_progress(done=done, count=total)
 
