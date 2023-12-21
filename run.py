@@ -42,6 +42,10 @@ def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", 
     tag_embeddings, tags = load_tag_embeddings(tags_file, model, tokenizer)
 
     index = Sist2Index(index_file)
+
+    # Récupération de la version de CLIP depuis l'index
+    clip_version = index.get("clip_version", default=0)
+
     # Enregistrement du modèle dans l'index
     index.register_model(
         id=1,
