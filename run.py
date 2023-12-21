@@ -37,7 +37,7 @@ def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", 
     model = CLIPModel(clip_model)
     tokenizer = Tokenizer(clip_model)
     cosine_sim = nn.CosineSimilarity()
-
+    clip_version = index.get("clip_version", default=0)
     tag_embeddings, tags = load_tag_embeddings(tags_file, model, tokenizer)
 
     index = Sist2Index(index_file)
