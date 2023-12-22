@@ -2,7 +2,7 @@ from io import BytesIO
 from sys import stderr
 import typer
 import torch
-import torch.nn as nn  # Importation ajoutée ici
+import torch.nn as nn
 from PIL import Image
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize, InterpolationMode
 
@@ -10,24 +10,23 @@ from clip_server.model.clip_model import CLIPModel
 from clip_server.model.tokenization import Tokenizer
 from sist2 import Sist2Index, serialize_float_array, print_progress
 
-
 # Utilisation d'InterpolationMode pour une compatibilité accrue
 BICUBIC = InterpolationMode.BICUBIC if hasattr(InterpolationMode, 'BICUBIC') else Image.BICUBIC
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using compute device {DEVICE}")
 
-# Nouvelle fonction de transformation adaptée à CLIP
-def get_transform(image_path):
+def get_transform(image):
+    # Taille d'entrée pour Open CLIP ViT-B-16-plus-240 est 640x640
     transform = Compose([
-        Resize(224, interpolation=Image.BICUBIC),
-        CenterCrop(224),
+        Resize((640, 640), interpolation=Image.BICUBIC),
         ToTensor(),
         Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
     ])
 
-    image = Image.open(image_path)
-    if image.mode != 'RGB':
+    if image.mode == 'P':  # Convertir les images palette en RGBA puis en RGB
+        image = image.convert('RGBA').convert('RGB')
+    elif image.mode != 'RGB':
         image = image.convert('RGB')
 
     return transform(image)
@@ -77,30 +76,26 @@ def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", 
                 if not tn:
                     raise Exception("Could not find thumbnail")
                 image = Image.open(BytesIO(tn))
-                image_transformed = get_transform(BytesIO(tn))
             else:
                 image = Image.open(doc.path)
-                image_transformed = get_transform(doc.path)
 
-            # Vérification et correction des dimensions de l'image si nécessaire
-            if image_transformed is not None:
-                if image_transformed.size(0) != 3 or image_transformed.size(1) != 224 or image_transformed.size(2) != 224:
-                    raise ValueError("Image dimensions are incorrect")
+            image_transformed = get_transform(image)
 
-                image_transformed = image_transformed.unsqueeze(0).to(DEVICE)
+            if image_transformed.size(0) != 3 or image_transformed.size(1) != 640 or image_transformed.size(2) != 640:
+                raise ValueError("Image dimensions are incorrect")
 
-                with torch.no_grad():
-                    embeddings = model.encode_image(image_transformed)
+            image_transformed = image_transformed.unsqueeze(0).to(DEVICE)
 
-                encoded = serialize_float_array(embeddings.cpu().detach().numpy()[0])
+            with torch.no_grad():
+                embeddings = model.encode_image(image_transformed)
 
-                index.upsert_embedding(doc.id, 0, None, 1, encoded)
+            encoded = serialize_float_array(embeddings.cpu().detach().numpy()[0])
 
-                print(f"Generated embeddings for {doc.rel_path}")
-                done += 1
-                print_progress(done=done, count=total)
-            else:
-                raise ValueError("Image transformation failed")
+            index.upsert_embedding(doc.id, 0, None, 1, encoded)
+
+            print(f"Generated embeddings for {doc.rel_path}")
+            done += 1
+            print_progress(done=done, count=total)
 
         except Exception as e:
             print(f"Could not process image {doc.rel_path}: {e}", file=stderr)
