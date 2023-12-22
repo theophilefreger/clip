@@ -10,26 +10,45 @@ from clip_server.model.clip_model import CLIPModel
 from clip_server.model.tokenization import Tokenizer
 from sist2 import Sist2Index, serialize_float_array, print_progress
 
-# Utilisation d'InterpolationMode pour une compatibilité accrue
-BICUBIC = InterpolationMode.BICUBIC if hasattr(InterpolationMode, 'BICUBIC') else Image.BICUBIC
-
+# Configuration du script
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using compute device {DEVICE}")
 
-def get_transform(image):
-    # Taille d'entrée pour Open CLIP ViT-B-16-plus-240 est 640x640
-    transform = Compose([
-        Resize((640, 640), interpolation=Image.BICUBIC),
-        ToTensor(),
-        Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
-    ])
+# Définition des méthodes de transformation d'image
+def resize(img: Image.Image, size: int) -> Image.Image:
+    if img.width < img.height:
+        return img.resize((size, int((img.height / img.width) * size)), resample=Image.BICUBIC)
+    else:
+        return img.resize((int((img.width / img.height) * size), size), resample=Image.BICUBIC)
 
-    if image.mode == 'P':  # Convertir les images palette en RGBA puis en RGB
+def crop(img: Image.Image, size: int) -> Image.Image:
+    left = int((img.size[0] / 2) - (size / 2))
+    upper = int((img.size[1] / 2) - (size / 2))
+    right = left + size
+    lower = upper + size
+    return img.crop((left, upper, right, lower))
+
+def to_numpy(img: Image.Image) -> np.ndarray:
+    return np.asarray(img.convert("RGB")).astype(np.float32) / 255.0
+
+def normalize(img: np.ndarray, mean: float, std: float) -> np.ndarray:
+    return (img - mean) / std
+
+# Fonction de transformation adaptée à CLIP
+def get_transform(image_path):
+    image = Image.open(image_path)
+    if image.mode == 'P':
         image = image.convert('RGBA').convert('RGB')
     elif image.mode != 'RGB':
         image = image.convert('RGB')
 
-    return transform(image)
+    resized_image = resize(image, 650)  # Redimensionnement
+    cropped_image = crop(resized_image, 640)  # Recadrage
+    numpy_image = to_numpy(cropped_image)  # Conversion en tableau numpy
+    normalized_image = normalize(numpy_image, mean=[0.48145466, 0.4578275, 0.40821073], std=[0.26862954, 0.26130258, 0.27577711])
+
+    # Conversion en tenseur PyTorch et réorganisation des dimensions
+    return torch.tensor(normalized_image).permute(2, 0, 1).unsqueeze(0).to(DEVICE)
 
 def load_tag_embeddings(tag_file, model, tokenizer):
     with open(tag_file) as f:
@@ -48,19 +67,9 @@ def load_tag_embeddings(tag_file, model, tokenizer):
 def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", tags_file: str = "general.txt", num_tags: int = 1, color="#dcd7ff"):
     model = CLIPModel(clip_model)
     tokenizer = Tokenizer(clip_model)
-    cosine_sim = nn.CosineSimilarity()
 
     index = Sist2Index(index_file)
     clip_version = index.get("clip_version", default=0)
-
-    index.register_model(
-        id=1,
-        name="CLIP",
-        url="https://raw.githubusercontent.com/simon987/sist2-models/main/clip/models/clip-vit-base-patch32-q8.onnx",
-        path="idx_512.clip",
-        size=512,
-        type="flat"
-    )
 
     where = f"version > {clip_version} AND ((SELECT name FROM mime WHERE id=document.mime) LIKE 'image/%' OR " \
             f"(SELECT name FROM mime WHERE id=document.mime) LIKE 'video/%')"
@@ -75,22 +84,14 @@ def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", 
                 tn = index.get_thumbnail(doc.id)
                 if not tn:
                     raise Exception("Could not find thumbnail")
-                image = Image.open(BytesIO(tn))
+                image_transformed = get_transform(BytesIO(tn))
             else:
-                image = Image.open(doc.path)
-
-            image_transformed = get_transform(image)
-
-            if image_transformed.size(0) != 3 or image_transformed.size(1) != 640 or image_transformed.size(2) != 640:
-                raise ValueError("Image dimensions are incorrect")
-
-            image_transformed = image_transformed.unsqueeze(0).to(DEVICE)
+                image_transformed = get_transform(doc.path)
 
             with torch.no_grad():
                 embeddings = model.encode_image(image_transformed)
 
             encoded = serialize_float_array(embeddings.cpu().detach().numpy()[0])
-
             index.upsert_embedding(doc.id, 0, None, 1, encoded)
 
             print(f"Generated embeddings for {doc.rel_path}")
@@ -102,11 +103,8 @@ def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", 
             continue
 
     index.set("clip_version", index.versions[-1].id)
-
-    print("Syncing tag table")
     index.sync_tag_table()
     index.commit()
-
     print("Done!")
 
 if __name__ == "__main__":
