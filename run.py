@@ -2,12 +2,14 @@ from io import BytesIO
 from sys import stderr
 import typer
 import torch
+import torch.nn as nn  # Importation ajoutée ici
 from PIL import Image
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize, InterpolationMode
 
 from clip_server.model.clip_model import CLIPModel
 from clip_server.model.tokenization import Tokenizer
 from sist2 import Sist2Index, serialize_float_array, print_progress
+
 
 # Utilisation d'InterpolationMode pour une compatibilité accrue
 BICUBIC = InterpolationMode.BICUBIC if hasattr(InterpolationMode, 'BICUBIC') else Image.BICUBIC
