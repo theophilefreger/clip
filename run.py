@@ -85,6 +85,9 @@ def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", 
 
             image_transformed = get_transform(image)
 
+            if image_transformed.size(0) != 3 or image_transformed.size(1) != 640 or image_transformed.size(2) != 640:
+                raise ValueError("Image dimensions are incorrect")
+
             image_transformed = image_transformed.unsqueeze(0).to(DEVICE)
 
             with torch.no_grad():
