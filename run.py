@@ -3,20 +3,24 @@ from sys import stderr
 import typer
 import torch
 from PIL import Image
-from torch import nn
-from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
+from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize, InterpolationMode
 
 from clip_server.model.clip_model import CLIPModel
 from clip_server.model.tokenization import Tokenizer
 from sist2 import Sist2Index, serialize_float_array, print_progress
 
+# Utilisation d'InterpolationMode pour une compatibilité accrue
+BICUBIC = InterpolationMode.BICUBIC if hasattr(InterpolationMode, 'BICUBIC') else Image.BICUBIC
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using compute device {DEVICE}")
 
-def get_transform():
+# Nouvelle fonction de transformation adaptée à CLIP
+def get_transform(n_px=224):
     return Compose([
-        Resize(224, interpolation=Image.BICUBIC),
-        CenterCrop(224),
+        Resize(n_px, interpolation=BICUBIC),
+        CenterCrop(n_px),
+        lambda image: image.convert('RGB'),
         ToTensor(),
         Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
     ])
