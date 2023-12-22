@@ -3,9 +3,9 @@ from sys import stderr
 import typer
 import torch
 import torch.nn as nn
-import numpy as np  # Ajout de l'importation de numpy
 from PIL import Image
-from torchvision.transforms import Compose, Resize, ToTensor, Normalize, InterpolationMode
+from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize, InterpolationMode
+import numpy as np  # Ajout de l'import de numpy
 
 from clip_server.model.clip_model import CLIPModel
 from clip_server.model.tokenization import Tokenizer
@@ -46,6 +46,39 @@ def load_tag_embeddings(tag_file, model, tokenizer):
     print(f"Pre-computed embeddings for {len(tags)} tags")
     return tag_embeddings, tags
 
+def process_image(doc, model):
+    try:
+        image_transformed = None
+
+        if doc.parent or doc.mime.startswith("video/"):
+            tn = index.get_thumbnail(doc.id)
+            if not tn:
+                raise Exception("Could not find thumbnail")
+            image = Image.open(BytesIO(tn))
+        else:
+            image = Image.open(doc.path)
+
+        image_transformed = get_transform(image)
+
+        if image_transformed.size(0) != 3 or image_transformed.size(1) != 640 or image_transformed.size(2) != 640:
+            raise ValueError("Image dimensions are incorrect")
+
+        image_transformed = image_transformed.unsqueeze(0).to(DEVICE)
+
+        with torch.no_grad():
+            embeddings = model.encode_image(image_transformed)
+
+        encoded = serialize_float_array(embeddings.cpu().detach().numpy()[0])
+
+        index.upsert_embedding(doc.id, 0, None, 1, encoded)
+
+        print(f"Generated embeddings for {doc.rel_path}")
+        return True
+
+    except Exception as e:
+        print(f"Could not process image {doc.rel_path}: {e}", file=stderr)
+        return False
+
 def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", tags_file: str = "general.txt", num_tags: int = 1, color="#dcd7ff"):
     model = CLIPModel(clip_model)
     tokenizer = Tokenizer(clip_model)
@@ -69,41 +102,9 @@ def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", 
     done = 0
 
     for doc in index.document_iter(where):
-        try:
-            image_transformed = None
-
-            if doc.parent or doc.mime.startswith("video/"):
-                tn = index.get_thumbnail(doc.id)
-                if not tn:
-                    raise Exception("Could not find thumbnail")
-                image = Image.open(BytesIO(tn))
-            else:
-                image = Image.open(doc.path)
-
-            # Correction de la taille de l'image
-            image = image.resize((640, 640), resample=Image.BICUBIC)
-
-            image_transformed = get_transform(image)
-
-            if image_transformed.size(0) != 3 or image_transformed.size(1) != 640 or image_transformed.size(2) != 640:
-                raise ValueError("Image dimensions are incorrect")
-
-            image_transformed = image_transformed.unsqueeze(0).to(DEVICE)
-
-            with torch.no_grad():
-                embeddings = model.encode_image(image_transformed)
-
-            encoded = serialize_float_array(embeddings.cpu().detach().numpy()[0])
-
-            index.upsert_embedding(doc.id, 0, None, 1, encoded)
-
-            print(f"Generated embeddings for {doc.rel_path}")
+        if process_image(doc, model):
             done += 1
             print_progress(done=done, count=total)
-
-        except Exception as e:
-            print(f"Could not process image {doc.rel_path}: {e}", file=stderr)
-            continue
 
     index.set("clip_version", index.versions[-1].id)
 
