@@ -51,8 +51,6 @@ def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", 
     tokenizer = Tokenizer(clip_model)
     cosine_sim = nn.CosineSimilarity()
 
-    tag_embeddings, tags = load_tag_embeddings(tags_file, model, tokenizer)
-
     index = Sist2Index(index_file)
     clip_version = index.get("clip_version", default=0)
 
@@ -95,21 +93,6 @@ def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", 
         with torch.no_grad():
             embeddings = model.encode_image(image)
 
-        if num_tags > 0:
-            tags_cos_sim = cosine_sim(tag_embeddings, embeddings).cpu().detach().numpy()
-            top_n = reversed(tags_cos_sim.argsort()[-num_tags:])
-            top_n_tags = [f"clip.{tags[i]}.{color}" for i in top_n]
-
-            if "tag" not in doc.json_data:
-                doc.json_data["tag"] = top_n_tags
-            else:
-                doc.json_data["tag"] = [
-                    *(t for t in doc.json_data["tag"] if not t.startswith("clip.")),
-                    *top_n_tags
-                ]
-
-            index.update_document(doc)
-
         encoded = serialize_float_array(embeddings.cpu().detach().numpy()[0])
 
         index.upsert_embedding(doc.id, 0, None, 1, encoded)
@@ -125,6 +108,9 @@ def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", 
     index.commit()
 
     print("Done!")
+
+if __name__ == "__main__":
+    typer.run(main)
 
 if __name__ == "__main__":
     typer.run(main)
