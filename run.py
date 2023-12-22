@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from PIL import Image
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize, InterpolationMode
-
+import numpy as np
 from clip_server.model.clip_model import CLIPModel
 from clip_server.model.tokenization import Tokenizer
 from sist2 import Sist2Index, serialize_float_array, print_progress
