@@ -50,7 +50,6 @@ def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", 
     model = CLIPModel(clip_model)
     tokenizer = Tokenizer(clip_model)
     cosine_sim = nn.CosineSimilarity()
-    transform = get_transform()
 
     tag_embeddings, tags = load_tag_embeddings(tags_file, model, tokenizer)
 
@@ -79,12 +78,15 @@ def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", 
                     raise Exception("Could not find thumbnail")
 
                 image = Image.open(BytesIO(tn))
+                image_transformed = get_transform(BytesIO(tn))
             else:
                 image = Image.open(doc.path)
+                image_transformed = get_transform(doc.path)
 
             if image.mode != 'RGB':
                 image = image.convert('RGB')
-            image = transform(image).unsqueeze(0).to(DEVICE)
+
+            image = image_transformed.unsqueeze(0).to(DEVICE)
 
         except Exception as e:
             print(f"Could not load image {doc.rel_path}: {e}", file=stderr)
