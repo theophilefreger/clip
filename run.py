@@ -18,7 +18,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using compute device {DEVICE}")
 
 # Nouvelle fonction de transformation adaptée à CLIP
-def process_image(image_path):
+def get_transform(image_path):
     transform = Compose([
         Resize(224, interpolation=Image.BICUBIC),
         CenterCrop(224),
