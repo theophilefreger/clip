@@ -70,36 +70,41 @@ def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", 
 
     for doc in index.document_iter(where):
         try:
+            image_transformed = None
+
             if doc.parent or doc.mime.startswith("video/"):
                 tn = index.get_thumbnail(doc.id)
                 if not tn:
                     raise Exception("Could not find thumbnail")
-
                 image = Image.open(BytesIO(tn))
                 image_transformed = get_transform(BytesIO(tn))
             else:
                 image = Image.open(doc.path)
                 image_transformed = get_transform(doc.path)
 
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
+            # Vérification et correction des dimensions de l'image si nécessaire
+            if image_transformed is not None:
+                if image_transformed.size(0) != 3 or image_transformed.size(1) != 224 or image_transformed.size(2) != 224:
+                    raise ValueError("Image dimensions are incorrect")
 
-            image = image_transformed.unsqueeze(0).to(DEVICE)
+                image_transformed = image_transformed.unsqueeze(0).to(DEVICE)
+
+                with torch.no_grad():
+                    embeddings = model.encode_image(image_transformed)
+
+                encoded = serialize_float_array(embeddings.cpu().detach().numpy()[0])
+
+                index.upsert_embedding(doc.id, 0, None, 1, encoded)
+
+                print(f"Generated embeddings for {doc.rel_path}")
+                done += 1
+                print_progress(done=done, count=total)
+            else:
+                raise ValueError("Image transformation failed")
 
         except Exception as e:
-            print(f"Could not load image {doc.rel_path}: {e}", file=stderr)
+            print(f"Could not process image {doc.rel_path}: {e}", file=stderr)
             continue
-
-        with torch.no_grad():
-            embeddings = model.encode_image(image)
-
-        encoded = serialize_float_array(embeddings.cpu().detach().numpy()[0])
-
-        index.upsert_embedding(doc.id, 0, None, 1, encoded)
-
-        print(f"Generated embeddings for {doc.rel_path}")
-        done += 1
-        print_progress(done=done, count=total)
 
     index.set("clip_version", index.versions[-1].id)
 
@@ -108,9 +113,6 @@ def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", 
     index.commit()
 
     print("Done!")
-
-if __name__ == "__main__":
-    typer.run(main)
 
 if __name__ == "__main__":
     typer.run(main)
