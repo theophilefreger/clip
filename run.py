@@ -18,13 +18,19 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using compute device {DEVICE}")
 
 # Nouvelle fonction de transformation adaptée à CLIP
-def get_transform():
-    return Compose([
+def process_image(image_path):
+    transform = Compose([
         Resize(224, interpolation=Image.BICUBIC),
         CenterCrop(224),
         ToTensor(),
         Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
     ])
+
+    image = Image.open(image_path)
+    if image.mode != 'RGB':
+        image = image.convert('RGB')
+
+    return transform(image)
 
 def load_tag_embeddings(tag_file, model, tokenizer):
     with open(tag_file) as f:
