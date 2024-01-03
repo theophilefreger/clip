@@ -1,118 +1,114 @@
 from io import BytesIO
-from sys import stderr
+import requests
+import onnxruntime as ort
+from transformers import AutoTokenizer
 import typer
-import torch
-import torch.nn as nn
 from PIL import Image
-from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize, InterpolationMode
-import numpy as np  # Ajout de l'import de numpy
-
-from clip_server.model.clip_model import CLIPModel
-from clip_server.model.tokenization import Tokenizer
+import numpy as np
 from sist2 import Sist2Index, serialize_float_array, print_progress
+import os
+from numpy import dot
+from numpy.linalg import norm
 
-# Utilisation d'InterpolationMode pour une compatibilité accrue
-BICUBIC = InterpolationMode.BICUBIC if hasattr(InterpolationMode, 'BICUBIC') else Image.BICUBIC
+# Définitions des chemins et URLs des modèles
+models_dir = "/models"
+text_model_path = os.path.join(models_dir, "text_model.onnx")
+vision_model_path = os.path.join(models_dir, "vision_model.onnx")
+text_model_url = "https://huggingface.co/immich-app/XLM-Roberta-Large-Vit-B-16Plus/resolve/main/textual/model.onnx?download=true"
+vision_model_url = "https://huggingface.co/immich-app/XLM-Roberta-Large-Vit-B-16Plus/resolve/main/visual/model.onnx?download=true"
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using compute device {DEVICE}")
+# Fonctions de téléchargement et de prétraitement
+def download_model(url, file_path):
+    response = requests.get(url)
+    if response.status_code == 200:
+        with open(file_path, 'wb') as f:
+            f.write(response.content)
+    else:
+        raise ValueError(f"Failed to download the model from {url}")
 
-def get_transform(image):
-    # Taille d'entrée pour Open CLIP ViT-B-16-plus-240 est 640x640
-    transform = Compose([
-        Resize((640, 640), interpolation=Image.BICUBIC),
-        ToTensor(),
-        Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
-    ])
+def preprocess_image(image: Image.Image, target_size: tuple = (224, 224)) -> np.ndarray:
+    image = image.resize(target_size)
+    image_array = np.array(image).astype(np.float32) / 255.0
+    return image_array
 
-    if image.mode == 'P':  # Convertir les images palette en RGBA puis en RGB
-        image = image.convert('RGBA').convert('RGB')
-    elif image.mode != 'RGB':
-        image = image.convert('RGB')
+def cosine_similarity(a, b):
+    return dot(a, b) / (norm(a) * norm(b))
 
-    return transform(image)
+# Téléchargement des modèles ONNX
+if not os.path.exists(models_dir):
+    os.makedirs(models_dir)
+download_model(text_model_url, text_model_path)
+download_model(vision_model_url, vision_model_path)
 
-def load_tag_embeddings(tag_file, model, tokenizer):
-    with open(tag_file) as f:
-        tags = [line.strip() for line in f]
+# Chargement des modèles ONNX et du tokenizer
+text_model = ort.InferenceSession(text_model_path)
+vision_model = ort.InferenceSession(vision_model_path)
+tokenizer = AutoTokenizer.from_pretrained("xlm-roberta-large")
 
-    tokenized = tokenizer(tags, context_length=77, truncate=True)
-    text_tokenized = tokenized['input_ids'].to(DEVICE)
-    attention_mask = tokenized['attention_mask'].to(DEVICE)
+# Fonctions d'encodage
+def encode_text(texts):
+    tokens = tokenizer(texts, padding=True, truncation=True, return_tensors="np").input_ids
+    return text_model.run(None, {"input_ids": tokens})[0]
 
-    with torch.no_grad():
-        tag_embeddings = model.encode_text(text_tokenized, attention_mask)
+def encode_image(image_data: np.ndarray):
+    return vision_model.run(None, {"image": image_data})[0]
 
-    print(f"Pre-computed embeddings for {len(tags)} tags")
-    return tag_embeddings, tags
-
-def process_image(doc, model):
-    try:
-        image_transformed = None
-
-        if doc.parent or doc.mime.startswith("video/"):
-            tn = index.get_thumbnail(doc.id)
-            if not tn:
-                raise Exception("Could not find thumbnail")
-            image = Image.open(BytesIO(tn))
-        else:
-            image = Image.open(doc.path)
-
-        image_transformed = get_transform(image)
-
-        if image_transformed.size(0) != 3 or image_transformed.size(1) != 640 or image_transformed.size(2) != 640:
-            raise ValueError("Image dimensions are incorrect")
-
-        image_transformed = image_transformed.unsqueeze(0).to(DEVICE)
-
-        with torch.no_grad():
-            embeddings = model.encode_image(image_transformed)
-
-        encoded = serialize_float_array(embeddings.cpu().detach().numpy()[0])
-
-        index.upsert_embedding(doc.id, 0, None, 1, encoded)
-
-        print(f"Generated embeddings for {doc.rel_path}")
-        return True
-
-    except Exception as e:
-        print(f"Could not process image {doc.rel_path}: {e}", file=stderr)
-        return False
-
-def main(index_file, clip_model: str = "M-CLIP/XLM-Roberta-Large-Vit-B-16Plus", tags_file: str = "general.txt", num_tags: int = 1, color="#dcd7ff"):
-    model = CLIPModel(clip_model)
-    tokenizer = Tokenizer(clip_model)
-    cosine_sim = nn.CosineSimilarity()
-
+# Fonction principale
+def main(index_file, tags_file: str = "general.txt", num_tags: int = 1, color="#dcd7ff"):
     index = Sist2Index(index_file)
-    clip_version = index.get("clip_version", default=0)
 
-    index.register_model(
-        id=1,
-        name="CLIP",
-        url="https://raw.githubusercontent.com/simon987/sist2-models/main/clip/models/clip-vit-base-patch32-q8.onnx",
-        path="idx_512.clip",
-        size=512,
-        type="flat"
-    )
+    # Charger et encoder les tags
+    with open(tags_file) as f:
+        tags = [line.strip() for line in f]
+    tag_embeddings = encode_text(tags)
 
-    where = f"version > {clip_version} AND ((SELECT name FROM mime WHERE id=document.mime) LIKE 'image/%' OR " \
-            f"(SELECT name FROM mime WHERE id=document.mime) LIKE 'video/%')"
+    # Logique de traitement des documents
+    where = "une_condition_adéquate_pour_sélectionner_les_documents"  # Mettez ici votre condition
     total = index.document_count(where)
     done = 0
 
     for doc in index.document_iter(where):
-        if process_image(doc, model):
+        try:
+            # Chargement de l'image
+            if doc.parent or doc.mime.startswith("video/"):
+                thumbnail = index.get_thumbnail(doc.id)
+                if not thumbnail:
+                    raise Exception("Thumbnail not found")
+                image = Image.open(BytesIO(thumbnail))
+            else:
+                image = Image.open(doc.path)
+
+            # Encodage de l'image
+            image_data = preprocess_image(image)
+            image_embeddings = encode_image(image_data)
+
+            # Calcul de la similarité
+            tags_cos_sim = [cosine_similarity(embedding, image_embeddings) for embedding in tag_embeddings]
+            top_n = np.argsort(tags_cos_sim)[-num_tags:]
+            top_n_tags = [f"xlmr.{tags[i]}.{color}" for i in top_n]
+
+            # Mise à jour des tags du document
+            doc.json_data["tag"] = top_n_tags
+            index.update_document(doc)
+
+            # Mise à jour des embeddings
+            encoded = serialize_float_array(image_embeddings)
+            index.upsert_embedding(doc.id, 0, None, 1, encoded)
+
+            print(f"Processed document {doc.rel_path}")
             done += 1
             print_progress(done=done, count=total)
 
-    index.set("clip_version", index.versions[-1].id)
+        except Exception as e:
+            print(f"Error processing document {doc.rel_path}: {e}")
 
-    print("Syncing tag table")
+    # Mise à jour et synchronisation de l'index
+    index.set("xlmr_clip_version", index.versions[-1].id)
     index.sync_tag_table()
     index.commit()
 
-    print("Done!")
+    print("Traitement terminé et index mis à jour.")
 
+# Exécution du script
 if __name__ == "__main__":
     typer.run(main)
