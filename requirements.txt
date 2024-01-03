@@ -1,9 +1,7 @@
-onnxruntime
-transformers
-pillow
-typer
-torch
-clip
+ftfy
+regex
+tqdm
+git+https://github.com/FreddeFrallan/Multilingual-CLIP.git
 git+https://github.com/simon987/sist2-python.git@2.0
-requests
-numpy
+torch
+typer
