@@ -21,7 +21,7 @@ def load_tag_embeddings(tag_file, model, tokenizer):
 
     text_tokenized = tokenizer(tags, padding=True, truncation=True, return_tensors="pt").to(DEVICE)
     with torch.no_grad():
-        tag_embeddings = model.forward(text_tokenized)
+        tag_embeddings = model.forward(text_tokenized, tokenizer)
 
     print(f"Pre-computed embeddings for {len(tags)} tags")
     return tag_embeddings, tags
