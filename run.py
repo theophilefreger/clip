@@ -18,10 +18,9 @@ print(f"Using compute device {DEVICE}")
 def load_tag_embeddings(tag_file, model, tokenizer):
     with open(tag_file) as f:
         tags = [line.strip() for line in f]
-
     text_tokenized = tokenizer(tags, padding=True, truncation=True, return_tensors="pt").to(DEVICE)
     with torch.no_grad():
-        tag_embeddings = model.forward(text_tokenized, tokenizer)
+        tag_embeddings = model.forward(text_tokenized)
 
     print(f"Pre-computed embeddings for {len(tags)} tags")
     return tag_embeddings, tags
