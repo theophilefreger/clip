@@ -1,122 +1,102 @@
 from io import BytesIO
-import requests
-import onnxruntime as ort
-from transformers import AutoTokenizer
+from sys import stderr
+
 import typer
+import torch
 from PIL import Image
 from torch import nn
-import numpy as np
+
 from sist2 import Sist2Index, serialize_float_array, print_progress
-import os
 
-# Définition des URLs pour télécharger les modèles ONNX
-text_model_url = "https://huggingface.co/immich-app/XLM-Roberta-Large-Vit-B-16Plus/resolve/main/textual/model.onnx?download=true"
-vision_model_url = "https://huggingface.co/immich-app/XLM-Roberta-Large-Vit-B-16Plus/resolve/main/visual/model.onnx?download=true"
+# Remplacement de la bibliothèque CLIP par le modèle multilingue CLIP
+from multilingual_clip import pt_multilingual_clip
 
-# Chemins locaux pour enregistrer les modèles ONNX
-models_dir = "/models"
-text_model_path = os.path.join(models_dir, "text_model.onnx")
-vision_model_path = os.path.join(models_dir, "vision_model.onnx")
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Using compute device {DEVICE}")
 
-# Créer le répertoire s'il n'existe pas
-if not os.path.exists(models_dir):
-    os.makedirs(models_dir)
-
-# Fonction pour télécharger et sauvegarder les modèles ONNX
-def download_model(url, file_path):
-    response = requests.get(url)
-    if response.status_code == 200:
-        with open(file_path, 'wb') as f:
-            f.write(response.content)
-    else:
-        raise ValueError(f"Échec du téléchargement du modèle depuis {url}")
-
-# Télécharger les modèles ONNX
-download_model(text_model_url, text_model_path)
-download_model(vision_model_url, vision_model_path)
-
-# Charger les modèles ONNX avec ONNX Runtime
-text_model = ort.InferenceSession(text_model_path)
-vision_model = ort.InferenceSession(vision_model_path)
-
-# Charger le tokenizer pour le modèle de texte
-tokenizer = AutoTokenizer.from_pretrained("xlm-roberta-large")
-
-# Fonction pour encoder le texte en utilisant le modèle ONNX
-def encode_text(texts):
-    tokens = tokenizer(texts, padding=True, truncation=True, return_tensors="np").input_ids
-    return text_model.run(None, {"input_ids": tokens})[0]
-
-# Fonction pour prétraiter et encoder une image en utilisant le modèle ONNX
-def preprocess_image(image: Image.Image) -> np.ndarray:
-    # Implementez le prétraitement de l'image ici
-    pass
-
-def encode_image(image_data: np.ndarray):
-    return vision_model.run(None, {"image": image_data})[0]
-
-def main(index_file, tags_file: str = "general.txt", num_tags: int = 1, color="#dcd7ff"):
-    cosine_sim = nn.CosineSimilarity()
-    index = Sist2Index(index_file)
-
-    # Charger et encoder les tags
-    with open(tags_file) as f:
+def load_tag_embeddings(tag_file, model):
+    with open(tag_file) as f:
         tags = [line.strip() for line in f]
-    tag_embeddings = encode_text(tags)
 
-    # Fonction pour traiter un document unique
-    def process_document(doc):
-        try:
-            if doc.parent or doc.mime.startswith("video/"):
-                thumbnail = index.get_thumbnail(doc.id)
-                if not thumbnail:
-                    raise Exception("Thumbnail non trouvé")
-                image = Image.open(BytesIO(thumbnail))
-            else:
-                image = Image.open(doc.path)
+    text_tokenized = model.tokenize(tags).to(DEVICE)
+    with torch.no_grad():
+        tag_embeddings = model.encode_text(text_tokenized)
 
-            image_data = preprocess_image(image)
-            image_embeddings = encode_image(image_data)
+    print(f"Pre-computed embeddings for {len(tags)} tags")
+    return tag_embeddings, tags
 
-        except Exception as e:
-            print(f"Erreur de traitement du document {doc.rel_path}: {e}", file=stderr)
-            return None
+def main(index_file, clip_model: str = "M-BERT-Distil-40-Lang-V1", tags_file: str = "general.txt", num_tags: int = 1, color="#dcd7ff"):
+    model = pt_multilingual_clip.load_model(clip_model)
+    model.to(DEVICE)
+    cosine_sim = nn.CosineSimilarity()
 
-        return image_embeddings
+    tag_embeddings, tags = load_tag_embeddings(tags_file, model)
 
-    # Logique pour traiter chaque document et mettre à jour l'index
-    where = f"version > {clip_version} AND ((SELECT name FROM mime WHERE id=document.mime) LIKE 'image/%' OR (SELECT name FROM mime WHERE id=document.mime) LIKE 'video/%')"
+    index = Sist2Index(index_file)
+    clip_version = index.get("clip_version", default=0)
+
+    index.register_model(
+        id=1,
+        name="CLIP",
+        url="https://github.com/FreddeFrallan/Multilingual-CLIP",
+        path="idx_512.clip",
+        size=512,
+        type="flat"
+    )
+
+    where = f"version > {clip_version} AND ((SELECT name FROM mime WHERE id=document.mime) LIKE 'image/%' OR " \
+            f"(SELECT name FROM mime WHERE id=document.mime) LIKE 'video/%')"
     total = index.document_count(where)
     done = 0
 
     for doc in index.document_iter(where):
-        image_embeddings = process_document(doc)
+        try:
+            if doc.parent or doc.mime.startswith("video/"):
+                tn = index.get_thumbnail(doc.id)
+                if not tn:
+                    raise Exception("Could not find thumbnail")
 
-        if image_embeddings is not None:
-            # Calculer la similarité cosine entre les tags et les embeddings de l'image
-            tags_cos_sim = cosine_sim(np.array(tag_embeddings), np.array(image_embeddings)).cpu().numpy()
-            top_n = np.argsort(tags_cos_sim)[-num_tags:]
-            top_n_tags = [f"xlmr.{tags[i]}.{color}" for i in top_n]
+                image = Image.open(BytesIO(tn))
+            else:
+                image = Image.open(doc.path)
 
-            # Mettre à jour les tags du document
-            doc.json_data["tag"] = top_n_tags
+            image = preprocess(image).unsqueeze(0).to(DEVICE)
+        except Exception as e:
+            print(f"Could not load image {doc.rel_path}: {e}", file=stderr)
+            continue
+
+        with torch.no_grad():
+            embeddings = model.encode_image(image)
+
+        if num_tags > 0:
+            tags_cos_sim = cosine_sim(tag_embeddings, embeddings).cpu().detach().numpy()
+            top_n = reversed(tags_cos_sim.argsort()[-num_tags:])
+            top_n_tags = [f"clip.{tags[i]}.{color}" for i in top_n]
+
+            if "tag" not in doc.json_data:
+                doc.json_data["tag"] = top_n_tags
+            else:
+                doc.json_data["tag"] = [
+                    *(t for t in doc.json_data["tag"] if not t.startswith("clip.")),
+                    *top_n_tags
+                ]
+
             index.update_document(doc)
 
-            # Mettre à jour les embeddings du document
-            encoded = serialize_float_array(image_embeddings)
-            index.upsert_embedding(doc.id, 0, None, 1, encoded)
+        encoded = serialize_float_array(embeddings.cpu().detach().numpy()[0])
+        index.upsert_embedding(doc.id, 0, None, 1, encoded)
 
-            print(f"Document traité {doc.rel_path}")
-            done += 1
-            print_progress(done=done, count=total)
+        print(f"Generated embeddings for {doc.rel_path}")
+        done += 1
+        print_progress(done=done, count=total)
 
-    # Mise à jour et synchronisation de l'index
-    index.set("xlmr_clip_version", index.versions[-1].id)
+    index.set("clip_version", index.versions[-1].id)
+
+    print("Syncing tag table")
     index.sync_tag_table()
     index.commit()
 
-    print("Traitement terminé et index mis à jour.")
+    print("Done!")
 
-# Exécution principale du script
 if __name__ == "__main__":
     typer.run(main)
